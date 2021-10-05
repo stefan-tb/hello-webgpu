@@ -1,4 +1,5 @@
 #include "webgpu.h"
+#include "matrix.h"
 
 #include <string.h>
 
@@ -9,7 +10,7 @@ WGPUSwapChain swapchain;
 WGPURenderPipeline pipeline;
 WGPUBuffer vertBuf; // vertex buffer with triangle position and colours
 WGPUBuffer indxBuf; // index buffer
-WGPUBuffer uRotBuf; // uniform buffer (containing the rotation angle)
+WGPUBuffer uniformBuf; // uniform buffer (containing the rotation angle)
 WGPUBindGroup bindGroup;
 
 /**
@@ -91,30 +92,30 @@ static char const triangle_vert_wgsl[] = R"(
 	}
 	[[block]]
 	struct VertexIn {
-		[[location(0)]] aPos : vec2<f32>;
-		[[location(1)]] aCol : vec3<f32>;
+		[[location(0)]] Pos : vec3<f32>;
+		[[location(1)]] Color : vec3<f32>;
 	};
 	struct VertexOut {
-		[[location(0)]] vCol : vec3<f32>;
 		[[builtin(position)]] Position : vec4<f32>;
+		[[location(0)]] Color : vec3<f32>;
 	};
 	[[block]]
-	struct Rotation {
-		[[location(0)]] degs : f32;
+	struct Uniforms {
+		worldViewProj : mat4x4<f32>;
 	};
-	[[group(0), binding(0)]] var<uniform> uRot : Rotation;
+	[[group(0), binding(0)]] var<uniform> uniforms : Uniforms;
 	[[stage(vertex)]]
 	fn main(input : VertexIn) -> VertexOut {
-		var rads : f32 = radians(uRot.degs);
-		var cosA : f32 = cos(rads);
-		var sinA : f32 = sin(rads);
-		var rot : mat3x3<f32> = mat3x3<f32>(
-			vec3<f32>( cosA, sinA, 0.0),
-			vec3<f32>(-sinA, cosA, 0.0),
-			vec3<f32>( 0.0,  0.0,  1.0));
+		let rot : mat4x4<f32> = mat4x4<f32>(
+			vec4<f32>(1.0, 0.0, 0.0, 0.0),
+			vec4<f32>(0.0, 1.0, 0.0, 0.0),
+			vec4<f32>(0.0, 0.0, 1.0, 0.0),
+			vec4<f32>(0.0, 0.0, 0.0, 1.0));
+
 		var output : VertexOut;
-		output.Position = vec4<f32>(rot * vec3<f32>(input.aPos, 1.0), 1.0);
-		output.vCol = input.aCol;
+		//output.Position = vec4<f32>(vec4<f32>(input.Pos, 1.0));
+		output.Position = vec4<f32>(uniforms.worldViewProj * vec4<f32>(input.Pos, 1.0));
+		output.Color = input.Color;
 		return output;
 	}
 )";
@@ -216,7 +217,7 @@ static void createPipelineAndBuffers() {
 	// NOTE: these are now the WGSL shaders (tested with Dawn and Chrome Canary)
 	WGPUShaderModule vertMod = createShader(triangle_vert_wgsl);
 	WGPUShaderModule fragMod = createShader(triangle_frag_wgsl);
-	
+
 	// keep the old unused SPIR-V shaders around for a while...
 	(void) triangle_vert_spirv;
 	(void) triangle_frag_spirv;
@@ -243,14 +244,14 @@ static void createPipelineAndBuffers() {
 
 	// describe buffer layouts
 	WGPUVertexAttribute vertAttrs[2] = {};
-	vertAttrs[0].format = WGPUVertexFormat_Float32x2;
+	vertAttrs[0].format = WGPUVertexFormat_Float32x3;
 	vertAttrs[0].offset = 0;
 	vertAttrs[0].shaderLocation = 0;
 	vertAttrs[1].format = WGPUVertexFormat_Float32x3;
-	vertAttrs[1].offset = 2 * sizeof(float);
+	vertAttrs[1].offset = 3 * sizeof(float);
 	vertAttrs[1].shaderLocation = 1;
 	WGPUVertexBufferLayout vertexBufferLayout = {};
-	vertexBufferLayout.arrayStride = 5 * sizeof(float);
+	vertexBufferLayout.arrayStride = 6 * sizeof(float);
 	vertexBufferLayout.attributeCount = 2;
 	vertexBufferLayout.attributes = vertAttrs;
 
@@ -283,7 +284,7 @@ static void createPipelineAndBuffers() {
 
 	desc.vertex.module = vertMod;
 	desc.vertex.entryPoint = "main";
-	desc.vertex.bufferCount = 1;//0;
+	desc.vertex.bufferCount = 1;
 	desc.vertex.buffers = &vertexBufferLayout;
 
 	desc.multisample.count = 1;
@@ -305,9 +306,9 @@ static void createPipelineAndBuffers() {
 
 	// create the buffers (x, y, r, g, b)
 	float const vertData[] = {
-		-0.8f, -0.8f, 0.0f, 0.0f, 1.0f, // BL
-		 0.8f, -0.8f, 0.0f, 1.0f, 0.0f, // BR
-		-0.0f,  0.8f, 1.0f, 0.0f, 0.0f, // top
+		-1.0f, -0.0f, 0.0f, 0.0f, 0.0f, 1.0f, // BL
+		 1.0f, -0.0f, 0.0f, 0.0f, 1.0f, 0.0f, // BR
+		-0.0f,  2.0f, 0.0f, 1.0f, 0.0f, 0.0f, // top
 	};
 	uint16_t const indxData[] = {
 		0, 1, 2,
@@ -317,13 +318,14 @@ static void createPipelineAndBuffers() {
 	indxBuf = createBuffer(indxData, sizeof(indxData), WGPUBufferUsage_Index);
 
 	// create the uniform bind group (note 'rotDeg' is copied here, not bound in any way)
-	uRotBuf = createBuffer(&rotDeg, sizeof(rotDeg), WGPUBufferUsage_Uniform);
+	matrix::Mat4x4 dummy;
+	uniformBuf = createBuffer(dummy, sizeof(matrix::Mat4x4), WGPUBufferUsage_Uniform);
 
 	WGPUBindGroupEntry bgEntry = {};
 	bgEntry.binding = 0;
-	bgEntry.buffer = uRotBuf;
+	bgEntry.buffer = uniformBuf;
 	bgEntry.offset = 0;
-	bgEntry.size = sizeof(rotDeg);
+	bgEntry.size = sizeof(matrix::Mat4x4);
 
 	WGPUBindGroupDescriptor bgDesc = {};
 	bgDesc.layout = bindGroupLayout;
@@ -359,8 +361,13 @@ static bool redraw() {
 	WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &renderPass);	// create pass
 
 	// update the rotation
-	rotDeg += 0.1f;
-	wgpuQueueWriteBuffer(queue, uRotBuf, 0, &rotDeg, sizeof(rotDeg));
+	rotDeg += 0.5f;
+	matrix::Mat4x4 a, b;
+	matrix::Ortho(a, 2.0 , 2, -5, 5);
+	matrix::Rotate(b, rotDeg, 0, 0, 1.0f);
+	matrix::Mat4x4 worldViewProj;
+	matrix::Multiply(worldViewProj, b, a);
+	wgpuQueueWriteBuffer(queue, uniformBuf, 0, worldViewProj, sizeof(matrix::Mat4x4));
 
 	// draw the triangle (comment these five lines to simply clear the screen)
 	wgpuRenderPassEncoderSetPipeline(pass, pipeline);
@@ -399,7 +406,7 @@ extern "C" int __main__(int /*argc*/, char* /*argv*/[]) {
 
 		#ifndef __EMSCRIPTEN__
 			wgpuBindGroupRelease(bindGroup);
-			wgpuBufferRelease(uRotBuf);
+			wgpuBufferRelease(uniformBuf);
 			wgpuBufferRelease(indxBuf);
 			wgpuBufferRelease(vertBuf);
 			wgpuRenderPipelineRelease(pipeline);
