@@ -13,6 +13,16 @@ WGPUBuffer indxBuf; // index buffer
 WGPUBuffer uniformBuf; // uniform buffer (containing the rotation angle)
 WGPUBindGroup bindGroup;
 
+/*
+ * Workaround for Dawn currently expecting 'undefined' for entire buffers and
+ * Emscripten/Chrome still expecting zero.
+ */
+#ifndef __EMSCRIPTEN__
+#define ZERO_BUFFER_SIZE WGPU_WHOLE_SIZE
+#else
+#define ZERO_BUFFER_SIZE 0
+#endif
+
 /**
  * Current rotation angle (in degrees, updated per frame).
  */
@@ -372,8 +382,8 @@ static bool redraw() {
 	// draw the triangle (comment these five lines to simply clear the screen)
 	wgpuRenderPassEncoderSetPipeline(pass, pipeline);
 	wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, 0);
-	wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertBuf, 0, 0);
-	wgpuRenderPassEncoderSetIndexBuffer(pass, indxBuf, WGPUIndexFormat_Uint16, 0, 0);
+	wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertBuf, 0, ZERO_BUFFER_SIZE);
+	wgpuRenderPassEncoderSetIndexBuffer(pass, indxBuf, WGPUIndexFormat_Uint16, 0, ZERO_BUFFER_SIZE);
 	wgpuRenderPassEncoderDrawIndexed(pass, 3, 1, 0, 0, 0);
 
 	wgpuRenderPassEncoderEndPass(pass);
