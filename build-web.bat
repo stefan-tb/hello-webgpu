@@ -1,4 +1,6 @@
 @echo off
+call ..\emsdk\emsdk_env.bat
+
 rem Builds the Emscripten implementation (on Windows)
 rem TODO: CMake...
 rem 

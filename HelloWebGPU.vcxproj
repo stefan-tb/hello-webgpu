@@ -178,6 +178,7 @@
   <ItemGroup>
     <ClInclude Include="inc\webgpu.h" />
     <ClInclude Include="inc\window.h" />
+    <ClInclude Include="inc\matrix.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

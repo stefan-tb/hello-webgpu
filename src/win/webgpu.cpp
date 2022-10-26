@@ -4,7 +4,7 @@
  * On Windows x86/x64 Dawn should have been built with the D3D12 and Vulkan
  * support; macOS/iOS it should be Metal only; Linux (and others) should be
  * Vulkan only. None of the platforms are built with OpenGL support.
- * 
+ *
  * TODO: are we doing GL?
  */
 #if __has_include("d3d12.h") || (_MSC_VER >= 1900)
@@ -57,10 +57,10 @@ WGPUDevice device;
  * binding the WebGPU device and native window, then its raw pointer is passed
  * into WebGPU as a 64-bit int. The browser API doesn't have an equivalent
  * (since the swap chain is created from the canvas directly).
- * 
+ *
  * Is the struct copied or does it need holding for the lifecycle of the swap
  * chain, i.e. can it just be a temporary?
- * 
+ *
  * After calling wgpuSwapChainRelease() does it also call swapImpl::Destroy()
  * to delete the underlying NativeSwapChainImpl(), invalidating this struct?
  */
@@ -83,9 +83,9 @@ static WGPUTextureFormat swapPref;
  * \n
  * The returned \c Adapter is a wrapper around the underlying Dawn adapter (and
  * owned by the single Dawn instance).
- * 
+ *
  * \todo we might be interested in whether the \c AdapterType is discrete or integrated for power-management reasons
- * 
+ *
  * \param[in] type1st first choice of \e backend type (e.g. \c WGPUBackendType_D3D12)
  * \param[in] type2nd optional fallback \e backend type (or \c WGPUBackendType_Null to pick the first choice or nothing)
  * \return the best choice adapter or an empty adapter wrapper
@@ -115,9 +115,9 @@ static dawn_native::Adapter requestAdapter(WGPUBackendType type1st, WGPUBackendT
 #ifdef DAWN_ENABLE_BACKEND_VULKAN
 /**
  * Helper to obtain a Vulkan surface from the supplied window.
- * 
+ *
  * \todo what's the lifecycle of this?
- * 
+ *
  * \param[in] device WebGPU device
  * \param[in] window window on which the device will be bound
  * \return window surface (or \c VK_NULL_HANDLE if creation failed)
@@ -148,6 +148,7 @@ static void initSwapChain(WGPUBackendType backend, WGPUDevice device, window::Ha
 		if (impl::swapImpl.userData == nullptr) {
 			impl::swapImpl = dawn_native::d3d12::CreateNativeSwapChainImpl(
 							 impl::device, reinterpret_cast<HWND>(window));
+			// FPS: auto d3ddevice = dawn_native::d3d12::GetD3D12Device(impl::device);
 			impl::swapPref = dawn_native::d3d12::GetNativeSwapChainPreferredFormat(&impl::swapImpl);
 		}
 		break;
@@ -172,7 +173,7 @@ static void initSwapChain(WGPUBackendType backend, WGPUDevice device, window::Ha
 
 /**
  * Dawn error handling callback (adheres to \c WGPUErrorCallback).
- * 
+ *
  * \param[in] message error string
  */
 static void printError(WGPUErrorType /*type*/, const char* message, void*) {

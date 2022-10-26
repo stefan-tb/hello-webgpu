@@ -33,13 +33,13 @@
  * Default window title.
  */
 #ifndef WINDOW_WIN_NAME
-#define WINDOW_WIN_NAME "Demo"
+#define WINDOW_WIN_NAME "Trumpf WGPU"
 #endif
 
 /*
  * Set if the window should be resizable (otherwise it is fixed to the width
  * and height defined above).
- * 
+ *
  * TODO: disable arbitrary resize and support fixed options?
  */
 #ifndef WINDOW_WIN_RESIZE
@@ -76,7 +76,7 @@
  *		myFunc();
  *	}
  * \endcode
- * 
+ *
  * \param[in] lib DLL/library name
  * \param[in] name function name
  * \return function pointer (or \c null if the lookup fails)
@@ -103,7 +103,7 @@ static T findFunction(LPCTSTR const lib, LPCSTR const name) {
  * \code
  *	myFunc_t myFunc = findFunction<myFunc_t>("myLib.dll", "myFunc");
  * \endcode
- * 
+ *
  * \param lib library name
  * \param name function name
  */
@@ -135,7 +135,7 @@ static T findFunction(LPCTSTR const lib, LPCSTR const name) {
  * Per Monitor v2, the only setting of interest for DPI aware applications
  * that use other Windows controls (including the title bar). Only supported
  * in Windows 10 Creators Update (1703) onwards (though not programatically).
- * 
+ *
  * \sa https://msdn.microsoft.com/library/windows/desktop/mt791579(v=vs.85).aspx
  */
 #ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
@@ -146,7 +146,7 @@ static T findFunction(LPCTSTR const lib, LPCSTR const name) {
  * Prototype for \c SetProcessDpiAwarenessContext, allowing DPI awareness to
  * be set programatically. Only supported in Windows 10 Creators Update (1703)
  * onwards (and with matching SDK).
- * 
+ *
  * \note The \e correct way of setting this is in the manifest, complicated by
  * the requirement to call \c EnableNonClientDpiScaling in earlier Win10
  * versions. We assume hi-DPI displays will be used on up-to-date installs.
@@ -175,7 +175,7 @@ typedef UINT (WINAPI *GetDpiForWindow_t)(HWND);
  * Prototype for \c AdjustWindowRectExForDpi, calculating the window bounds
  * for a given style. Only supported in Windows 10 Anniversary Update (1607)
  * onwards.
- * 
+ *
  * \sa https://msdn.microsoft.com/en-us/library/windows/desktop/mt748618(v=vs.85).aspx
  */
 typedef BOOL (WINAPI *AdjustWindowRectExForDpi_t)(LPRECT, DWORD, BOOL, DWORD, UINT);
@@ -205,9 +205,9 @@ namespace impl {
 
 /**
  * Helper to toggle between windowed mode and fullscreen.
- * 
+ *
  * \todo tested only on Windows 10 so far
- * 
+ *
  * \param[in] hWnd main application window handle
  * \param[in] exit \c true if the toggle can only \e exit fullscreen
  */
@@ -258,7 +258,7 @@ static void toggleFullscreen(HWND const hWnd, bool const exit = false) {
 
 /**
  * Queries a window's DPI.
- * 
+ *
  * \param[in] hWnd window handle (or \c null for the default window)
  * \return best guess at the DPI
  */
@@ -269,7 +269,7 @@ static UINT getWindowDpi(HWND const hWnd = NULL) {
 	 * The fallback (seemingly) grabs the default monitor and ignores any
 	 * updated scale preferences, but is better than creating a tiny window on
 	 * hi-DPI systems.
-	 * 
+	 *
 	 * TODO: add GetDpiForMonitor for older Windows anyway
 	 */
 	UINT dpi = 0;
@@ -296,7 +296,7 @@ static UINT getWindowDpi(HWND const hWnd = NULL) {
 /**
  * Standard \c WndProc function for Windows events, passing key presses, mouse
  * events, etc., to the different \c impl internal functions.
- * 
+ *
  * \param[in] hWnd window handle
  * \param[in[ uMsg message type
  */
@@ -327,7 +327,7 @@ LRESULT CALLBACK windowEvents(HWND const hWnd, UINT const uMsg, WPARAM const wPa
 		 * for moving (at a guess, the DX11 backend changed) but resizing and
 		 * DPI changes look better. The (SWP_NOSIZE | SWP_NOMOVE) corresponds
 		 * to window activation and DPI/monitor changes.
-		 * 
+		 *
 		 * A true fix would be to redraw, not just swap buffers, allowing for
 		 * live resizing. This is a lightweight compromise.
 		 */
@@ -338,7 +338,7 @@ LRESULT CALLBACK windowEvents(HWND const hWnd, UINT const uMsg, WPARAM const wPa
 			 * Hmm, I'm not happy still with this. It looks to cause massive
 			 * flickering when going from different DPI monitors in some
 			 * configs. The swap is commented out for now.
-			 * 
+			 *
 			 * if (eglDisplay != EGL_NO_DISPLAY && eglSurface != EGL_NO_SURFACE) {
 			 *     eglSwapBuffers(eglDisplay, eglSurface);
 			 * }
@@ -349,7 +349,7 @@ LRESULT CALLBACK windowEvents(HWND const hWnd, UINT const uMsg, WPARAM const wPa
 		/*
 		 * F11 toggles between fullscreen and windowed mode; ESC exits
 		 * fullscreen (but does nothing if windowed).
-		 * 
+		 *
 		 * TODO: other function keys for 4:3, 16:9, etc.?
 		 */
 		if (wParam == VK_F11) {
@@ -368,7 +368,7 @@ LRESULT CALLBACK windowEvents(HWND const hWnd, UINT const uMsg, WPARAM const wPa
 		 * normal to high to normal, increasingly shrinks the window). It's
 		 * still not 100%, but is at least consistent when moving between
 		 * monitors.
-		 * 
+		 *
 		 * TODO: older Windows (pre-Win10 1703) appear to get the size calculation wrong?
 		 */
 	case WM_DPICHANGED: {
@@ -386,7 +386,7 @@ LRESULT CALLBACK windowEvents(HWND const hWnd, UINT const uMsg, WPARAM const wPa
 	 * manually. The original size and scale work because 'hWnd' is still at
 	 * the old DPI and 'wParam' is the new. Return TRUE to say we handled it
 	 * ('lParam' contains the returned size).
-	 * 
+	 *
 	 * TODO: grab the menu parameter
 	 */
 	case WM_GETDPISCALEDSIZE: {
@@ -431,10 +431,10 @@ bool yield() {
 			running = false;
 		}
 		TranslateMessage(&msg);
-		DispatchMessage (&msg); 
+		DispatchMessage (&msg);
 	}
 	Sleep(WINDOW_SLEEP_PERIOD);
-	return running; 
+	return running;
 }
 }
 

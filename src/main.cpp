@@ -1,7 +1,21 @@
+#define ZBUFFER
+// see dawn/src/utils/ComboRenderPipelineDescriptor.cpp
+
 #include "webgpu.h"
 #include "matrix.h"
 
 #include <string.h>
+#include "mesh.h"
+
+//float const data_positionAndNormals[] = {
+//		-1.0f, -0.0f, 0.0f, 0.0f, 0.0f, 1.0f, // BL
+//		 1.0f, -0.0f, 0.0f, 0.0f, 1.0f, 0.0f, // BR
+//		-0.0f,  1.0f, 0.0f, 1.0f, 0.0f, 0.0f, // top
+//};
+//uint16_t const data_indices[] = {
+//	0, 1, 2,
+//	0 // padding (better way of doing this?)
+//};
 
 WGPUDevice device;
 WGPUQueue queue;
@@ -12,6 +26,9 @@ WGPUBuffer vertBuf; // vertex buffer with triangle position and colours
 WGPUBuffer indxBuf; // index buffer
 WGPUBuffer uniformBuf; // uniform buffer (containing the rotation angle)
 WGPUBindGroup bindGroup;
+#ifdef ZBUFFER
+WGPUTexture depthStencilTexture;
+#endif
 
 /*
  * Workaround for Dawn currently expecting 'undefined' for entire buffers and
@@ -23,10 +40,15 @@ WGPUBindGroup bindGroup;
 #define ZERO_BUFFER_SIZE 0
 #endif
 
-/**
- * Current rotation angle (in degrees, updated per frame).
- */
+ /**
+  * Current rotation angle (in degrees, updated per frame).
+  */
 float rotDeg = 0.0f;
+
+typedef struct Uniforms {
+	matrix::Mat4x4 world;
+	matrix::Mat4x4 viewProj;
+} Uniforms;
 
 /**
  * Vertex shader SPIR-V.
@@ -103,7 +125,7 @@ static char const triangle_vert_wgsl[] = R"(
 	[[block]]
 	struct VertexIn {
 		[[location(0)]] Pos : vec3<f32>;
-		[[location(1)]] Color : vec3<f32>;
+		[[location(1)]] Normal : vec3<f32>;
 	};
 	struct VertexOut {
 		[[builtin(position)]] Position : vec4<f32>;
@@ -111,7 +133,8 @@ static char const triangle_vert_wgsl[] = R"(
 	};
 	[[block]]
 	struct Uniforms {
-		worldViewProj : mat4x4<f32>;
+		world : mat4x4<f32>;
+		viewProj : mat4x4<f32>;
 	};
 	[[group(0), binding(0)]] var<uniform> uniforms : Uniforms;
 	[[stage(vertex)]]
@@ -124,8 +147,9 @@ static char const triangle_vert_wgsl[] = R"(
 
 		var output : VertexOut;
 		//output.Position = vec4<f32>(vec4<f32>(input.Pos, 1.0));
-		output.Position = vec4<f32>(uniforms.worldViewProj * vec4<f32>(input.Pos, 1.0));
-		output.Color = input.Color;
+		output.Position = vec4<f32>(uniforms.world * vec4<f32>(input.Pos, 1.0));
+		output.Position = vec4<f32>(uniforms.viewProj * output.Position);
+		output.Color =  (uniforms.world * vec4<f32>(input.Normal, 0.0)).xyz;
 		return output;
 	}
 )";
@@ -164,8 +188,17 @@ static uint32_t const triangle_frag_spirv[] = {
  */
 static char const triangle_frag_wgsl[] = R"(
 	[[stage(fragment)]]
-	fn main([[location(0)]] vCol : vec3<f32>) -> [[location(0)]] vec4<f32> {
-		return vec4<f32>(vCol, 1.0);
+	fn main([[location(0)]] normal : vec3<f32>) -> [[location(0)]] vec4<f32> {
+
+	let surfaceNormal : vec3<f32> = normalize(normal);
+	let color : vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
+	let zero : vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+	let one : vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
+	return vec4<f32>(
+		color.xyz * 0.5 + // ambient (should be * 0.3)
+		color.xyz * 0.4 * clamp(dot(surfaceNormal, vec3<f32>(0.0, 1.0, 0.0)), 0.0, 1.0) + // hemisperic
+		color.xyz * 0.6 * clamp(dot(surfaceNormal, vec3<f32>(0.8660254, -0.4330127, 0.25)), 0.0, 1.0) * vec3<f32>(1.0, 0.9607844, 0.9078432)  // directional
+		, 1.0);
 	}
 )";
 
@@ -213,7 +246,7 @@ static WGPUShaderModule createShader(const char* const code, const char* label =
 static WGPUBuffer createBuffer(const void* data, size_t size, WGPUBufferUsage usage) {
 	WGPUBufferDescriptor desc = {};
 	desc.usage = WGPUBufferUsage_CopyDst | usage;
-	desc.size  = size;
+	desc.size = size;
 	WGPUBuffer buffer = wgpuDeviceCreateBuffer(device, &desc);
 	wgpuQueueWriteBuffer(queue, buffer, 0, data, size);
 	return buffer;
@@ -229,17 +262,14 @@ static void createPipelineAndBuffers() {
 	WGPUShaderModule fragMod = createShader(triangle_frag_wgsl);
 
 	// keep the old unused SPIR-V shaders around for a while...
-	(void) triangle_vert_spirv;
-	(void) triangle_frag_spirv;
-
-	WGPUBufferBindingLayout buf = {};
-	buf.type = WGPUBufferBindingType_Uniform;
+	(void)triangle_vert_spirv;
+	(void)triangle_frag_spirv;
 
 	// bind group layout (used by both the pipeline layout and uniform bind group, released at the end of this function)
 	WGPUBindGroupLayoutEntry bglEntry = {};
 	bglEntry.binding = 0;
 	bglEntry.visibility = WGPUShaderStage_Vertex;
-	bglEntry.buffer = buf;
+	bglEntry.buffer.type = WGPUBufferBindingType_Uniform;
 
 	WGPUBindGroupLayoutDescriptor bglDesc = {};
 	bglDesc.entryCount = 1;
@@ -267,7 +297,7 @@ static void createPipelineAndBuffers() {
 
 	// Fragment state
 	WGPUBlendState blend = {};
-	blend.color.operation = WGPUBlendOperation_Add;
+	blend.color.operation = WGPUBlendOperation_Min;
 	blend.color.srcFactor = WGPUBlendFactor_One;
 	blend.color.dstFactor = WGPUBlendFactor_One;
 	blend.alpha.operation = WGPUBlendOperation_Add;
@@ -276,9 +306,10 @@ static void createPipelineAndBuffers() {
 
 	WGPUColorTargetState colorTarget = {};
 	colorTarget.format = webgpu::getSwapChainFormat(device);
-	colorTarget.blend = &blend;
+	colorTarget.blend = nullptr;//&blend;
 	colorTarget.writeMask = WGPUColorWriteMask_All;
 
+	// Set the defaults for the fragment state
 	WGPUFragmentState fragment = {};
 	fragment.module = fragMod;
 	fragment.entryPoint = "main";
@@ -288,19 +319,44 @@ static void createPipelineAndBuffers() {
 	WGPURenderPipelineDescriptor desc = {};
 	desc.fragment = &fragment;
 
+#ifdef ZBUFFER
+	WGPUStencilFaceState stencilFace;
+	stencilFace.compare = WGPUCompareFunction_Always;
+	stencilFace.failOp = WGPUStencilOperation_Keep;
+	stencilFace.depthFailOp = WGPUStencilOperation_Keep;
+	stencilFace.passOp = WGPUStencilOperation_Keep;
+
+	WGPUDepthStencilState depthStencilState = {};
+	depthStencilState.format = WGPUTextureFormat_Depth24PlusStencil8;
+	depthStencilState.depthWriteEnabled = true;
+	depthStencilState.depthCompare = WGPUCompareFunction_Less;
+	depthStencilState.stencilBack = stencilFace;
+	depthStencilState.stencilFront = stencilFace;
+	depthStencilState.stencilReadMask = 0xff;
+	depthStencilState.stencilWriteMask = 0xff;
+	depthStencilState.depthBias = 0;
+	depthStencilState.depthBiasSlopeScale = 0.0;
+	depthStencilState.depthBiasClamp = 0.0;
+#endif
+
 	// Other state
 	desc.layout = pipelineLayout;
-	desc.depthStencil = nullptr;
+#ifdef ZBUFFER
+	desc.depthStencil = &depthStencilState;
+#endif
 
+	// Set defaults for the vertex state.
 	desc.vertex.module = vertMod;
 	desc.vertex.entryPoint = "main";
 	desc.vertex.bufferCount = 1;
 	desc.vertex.buffers = &vertexBufferLayout;
 
+	// Set the defaults for the multisample state
 	desc.multisample.count = 1;
 	desc.multisample.mask = 0xFFFFFFFF;
 	desc.multisample.alphaToCoverageEnabled = false;
 
+	// Set the defaults for the primitive state
 	desc.primitive.frontFace = WGPUFrontFace_CCW;
 	desc.primitive.cullMode = WGPUCullMode_None;
 	desc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
@@ -315,27 +371,18 @@ static void createPipelineAndBuffers() {
 	wgpuShaderModuleRelease(vertMod);
 
 	// create the buffers (x, y, r, g, b)
-	float const vertData[] = {
-		-1.0f, -0.0f, 0.0f, 0.0f, 0.0f, 1.0f, // BL
-		 1.0f, -0.0f, 0.0f, 0.0f, 1.0f, 0.0f, // BR
-		-0.0f,  2.0f, 0.0f, 1.0f, 0.0f, 0.0f, // top
-	};
-	uint16_t const indxData[] = {
-		0, 1, 2,
-		0 // padding (better way of doing this?)
-	};
-	vertBuf = createBuffer(vertData, sizeof(vertData), WGPUBufferUsage_Vertex);
-	indxBuf = createBuffer(indxData, sizeof(indxData), WGPUBufferUsage_Index);
+	vertBuf = createBuffer(data_positionAndNormals, sizeof(data_positionAndNormals), WGPUBufferUsage_Vertex);
+	indxBuf = createBuffer(data_indices, sizeof(data_indices), WGPUBufferUsage_Index);
 
 	// create the uniform bind group (note 'rotDeg' is copied here, not bound in any way)
-	matrix::Mat4x4 dummy;
-	uniformBuf = createBuffer(dummy, sizeof(matrix::Mat4x4), WGPUBufferUsage_Uniform);
+	Uniforms dummy;
+	uniformBuf = createBuffer(&dummy, sizeof(Uniforms), WGPUBufferUsage_Uniform);
 
 	WGPUBindGroupEntry bgEntry = {};
 	bgEntry.binding = 0;
 	bgEntry.buffer = uniformBuf;
 	bgEntry.offset = 0;
-	bgEntry.size = sizeof(matrix::Mat4x4);
+	bgEntry.size = sizeof(Uniforms);
 
 	WGPUBindGroupDescriptor bgDesc = {};
 	bgDesc.layout = bindGroupLayout;
@@ -346,6 +393,20 @@ static void createPipelineAndBuffers() {
 
 	// last bit of clean-up
 	wgpuBindGroupLayoutRelease(bindGroupLayout);
+
+#ifdef ZBUFFER
+	// https://github.com/samdauwe/webgpu-native-examples/blob/master/src/examples/msaa_line.c
+	WGPUTextureDescriptor descriptor = {};
+	descriptor.dimension = WGPUTextureDimension::WGPUTextureDimension_2D;
+	descriptor.size.width = 800;
+	descriptor.size.height = 450;
+	descriptor.size.depthOrArrayLayers = 1;
+	descriptor.sampleCount = 1;
+	descriptor.format = WGPUTextureFormat::WGPUTextureFormat_Depth24PlusStencil8;
+	descriptor.mipLevelCount = 1;
+	descriptor.usage = WGPUTextureUsage::WGPUTextureUsage_RenderAttachment;
+	depthStencilTexture = wgpuDeviceCreateTexture(device, &descriptor);
+#endif
 }
 
 /**
@@ -354,37 +415,71 @@ static void createPipelineAndBuffers() {
 static bool redraw() {
 	WGPUTextureView backBufView = wgpuSwapChainGetCurrentTextureView(swapchain);			// create textureView
 
-	WGPURenderPassColorAttachment colorDesc = {};
-	colorDesc.view    = backBufView;
-	colorDesc.loadOp  = WGPULoadOp_Clear;
-	colorDesc.storeOp = WGPUStoreOp_Store;
-	colorDesc.clearColor.r = 0.3f;
-	colorDesc.clearColor.g = 0.3f;
-	colorDesc.clearColor.b = 0.3f;
-	colorDesc.clearColor.a = 1.0f;
+#ifdef ZBUFFER
+	//WGPUTextureViewDescriptor desc2{};
+	//desc2.format = WGPUTextureFormat_Depth24PlusStencil8;
+	//desc2.dimension = WGPUTextureViewDimension_2D;
+	//desc2.baseMipLevel = 0;
+	//desc2.mipLevelCount = 1;
+	//desc2.baseArrayLayer = 0;
+	//desc2.arrayLayerCount = 1;
+	WGPUTextureView depthStencilView = wgpuTextureCreateView(depthStencilTexture, nullptr);
+#endif
+
+	WGPURenderPassColorAttachment colorAttachment = {};
+	colorAttachment.loadOp = WGPULoadOp_Clear;
+	colorAttachment.storeOp = WGPUStoreOp_Store;
+	colorAttachment.clearColor.r = 0.3f;
+	colorAttachment.clearColor.g = 0.3f;
+	colorAttachment.clearColor.b = 0.3f;
+	colorAttachment.clearColor.a = 1.0f;
+	colorAttachment.view = backBufView;
+
+#ifdef ZBUFFER
+	WGPURenderPassDepthStencilAttachment depthStencilAttachment = {};
+	depthStencilAttachment.clearDepth = 1.0f;
+	depthStencilAttachment.clearStencil = 0;
+	depthStencilAttachment.depthLoadOp = WGPULoadOp_Clear;
+	depthStencilAttachment.depthStoreOp = WGPUStoreOp_Store;
+	depthStencilAttachment.stencilLoadOp = WGPULoadOp_Clear;
+	depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Store;
+	depthStencilAttachment.view = depthStencilView;
+#endif
 
 	WGPURenderPassDescriptor renderPass = {};
 	renderPass.colorAttachmentCount = 1;
-	renderPass.colorAttachments = &colorDesc;
+	renderPass.colorAttachments = &colorAttachment;
+#ifdef ZBUFFER
+	renderPass.depthStencilAttachment = &depthStencilAttachment;
+#endif
 
 	WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);			// create encoder
 	WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &renderPass);	// create pass
 
-	// update the rotation
+	// update the rotation, translate first, then rotate
 	rotDeg += 0.5f;
-	matrix::Mat4x4 a, b;
-	matrix::Ortho(a, 2.0 , 2, -5, 5);
-	matrix::Rotate(b, rotDeg, 0, 0, 1.0f);
-	matrix::Mat4x4 worldViewProj;
-	matrix::Multiply(worldViewProj, b, a);
-	wgpuQueueWriteBuffer(queue, uniformBuf, 0, worldViewProj, sizeof(matrix::Mat4x4));
+
+	Uniforms uniforms;
+
+	matrix::Mat4x4 m;
+	matrix::Translate(uniforms.world, -25, 0, 0);
+	matrix::Rotate(m, rotDeg, 1, 1, 0);
+	matrix::Multiply(uniforms.world, m);
+	matrix::Translate(m, 0, 0, -100);
+	matrix::Multiply(uniforms.world, m);
+
+	matrix::Ortho(uniforms.viewProj, 100 * (800 / 450.0), 100, -1000, 1000);
+
+	matrix::Transpose(uniforms.world);
+	matrix::Transpose(uniforms.viewProj);
+	wgpuQueueWriteBuffer(queue, uniformBuf, 0, &uniforms, sizeof(uniforms));
 
 	// draw the triangle (comment these five lines to simply clear the screen)
 	wgpuRenderPassEncoderSetPipeline(pass, pipeline);
 	wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, 0);
 	wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertBuf, 0, ZERO_BUFFER_SIZE);
 	wgpuRenderPassEncoderSetIndexBuffer(pass, indxBuf, WGPUIndexFormat_Uint16, 0, ZERO_BUFFER_SIZE);
-	wgpuRenderPassEncoderDrawIndexed(pass, 3, 1, 0, 0, 0);
+	wgpuRenderPassEncoderDrawIndexed(pass, (sizeof(data_indices) / sizeof(data_indices[0])), 1, 0, 0, 0);
 
 	wgpuRenderPassEncoderEndPass(pass);
 	wgpuRenderPassEncoderRelease(pass);														// release pass
@@ -398,6 +493,9 @@ static bool redraw() {
 	 * TODO: wgpuSwapChainPresent is unsupported in Emscripten, so what do we do?
 	 */
 	wgpuSwapChainPresent(swapchain);
+#endif
+#ifdef ZBUFFER
+	wgpuTextureViewRelease(depthStencilView);												// release textureView
 #endif
 	wgpuTextureViewRelease(backBufView);													// release textureView
 
@@ -414,7 +512,7 @@ extern "C" int __main__(int /*argc*/, char* /*argv*/[]) {
 			window::show(wHnd);
 			window::loop(wHnd, redraw);
 
-		#ifndef __EMSCRIPTEN__
+#ifndef __EMSCRIPTEN__
 			wgpuBindGroupRelease(bindGroup);
 			wgpuBufferRelease(uniformBuf);
 			wgpuBufferRelease(indxBuf);
@@ -423,11 +521,11 @@ extern "C" int __main__(int /*argc*/, char* /*argv*/[]) {
 			wgpuSwapChainRelease(swapchain);
 			wgpuQueueRelease(queue);
 			wgpuDeviceRelease(device);
-		#endif
+#endif
 		}
-	#ifndef __EMSCRIPTEN__
+#ifndef __EMSCRIPTEN__
 		window::destroy(wHnd);
-	#endif
+#endif
 	}
 	return 0;
 }
